@@ -1,0 +1,282 @@
+---
+title: "hw8_BegumBabur"
+format: html
+editor: visual
+eval: true
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(bayesplot)
+library(tidyverse)
+library(brms)
+library(modelsummary)
+library(dplyr)
+library(posterior)
+```
+
+# Research Question
+
+> Do individuals differ in their reaction times in making trust game decisions based on their depression scores?
+
+# Variables
+
+-   `ID`: participant ID
+-   `agentType`: the kind of agent participant interacted with in the trust game (whether they provided a good or bad rank). to be able to play a trust game, participants needed to match with agents but they could be providing a good or bad rank for the participant, as an indication of how much they want to play with the participant. the two different agent types reflect agents providing bad rank, good outcome (BR, GO) or good rank, good outcome (GR, GO).
+-   `trustRTVec`: reaction time (RT) for each trust game decision per trial. participants needed to match with an agent to play the trust game and decide whether they should return half or keep all of the points they received. trust game RT is capped at 2.5 seconds (2500), range 0-2500.
+-   `DASS_Depr`: Self-reported depression scores from the Depression subscale of the Depression, Anxiety, and Stress Scale (DASS-21) by Lovibond & Lovibond, 1995. Scores range from 0-21.
+
+## Data Import
+
+```{r}
+data <- read.csv("~/Desktop/USC/Fall_2024/573_Bayesian/Project/merged_dat_trustgame_indvdfs.csv", row.names = NULL)
+
+data$agentType <- as.factor(data$agentType)
+
+data <- data[!is.na(data$trustRTVec) & !is.nan(data$trustRTVec) & !is.infinite(data$trustRTVec), ]
+```
+
+## Variable Summary
+
+Table @tbl-summ-var shows the summary statistics of evaluating RTs by different agent types.
+
+```{r}
+#| label: tbl-summ-var
+#| tbl-cap: Descriptive statistics by different agent types
+datasummary(trustRTVec*
+                (N + Mean + SD + Min + Max + Histogram) ~ 
+                factor(agentType),
+            data = data)
+```
+
+Table @tbl-summ-var2 shows summary statistics for evaluating RTs across clinical cut off points of DASS_Depr.
+
+```{r}
+#| label: tbl-summ-var2
+
+#Normal(0 to 5), Mild (6 to 9), Moderate, (10 to 13), Severe (14 to 17), Extremely Severe (18+)
+
+data %>%
+   mutate(
+    DASS_Depr_bin = cut(
+      DASS_Depr,
+      breaks = c(0, 6, 10, 14, 18, Inf), # Adjust based on meaningful ranges
+      labels = c("Normal", "Mild", "Moderate", "Severe", "Extremely Severe"),
+      include.lowest = TRUE
+    )
+  ) %>%
+  group_by(DASS_Depr_bin) %>%
+  summarise(
+    N = n(),
+    Mean = mean(trustRTVec, na.rm = TRUE),
+    SD = sd(trustRTVec, na.rm = TRUE),
+    Min = min(trustRTVec, na.rm = TRUE),
+    Max = max(trustRTVec, na.rm = TRUE)
+  ) %>%
+  print()
+
+```
+
+Table @tbl-summ-total shows summary statistics for RTs for the whole data set.
+
+```{r}
+#| label: tbl-summ-total
+data %>%
+  summarise(N = n(),
+            Mean = mean(trustRTVec, na.rm = TRUE),
+            SD = sd(trustRTVec, na.rm = TRUE),
+            Min = min(trustRTVec, na.rm = TRUE),
+            Max = max(trustRTVec, na.rm = TRUE))
+```
+
+# Model 1: lognormal family
+
+Let $Y_i$ = trustRTVec, $X_1$ = DASS_Depr, $X_2$ = agentType, and $Z_i$ = ID
+
+### Model:
+
+$$
+\begin{aligned}
+Y_i & \sim \text{LogNormal}(\mu_i, \sigma) \\
+\mu_i & = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \beta_3 (X_1 \cdot X_2) + b_{0i} + b_{1i} X_2
+\end{aligned}
+$$
+
+### Prior:
+
+$$
+\begin{aligned}
+\beta_0 & \sim N(7, 2) \\
+\beta_k & \sim N(0, 1), \quad k \in \{1, 2, 3\} \\
+\sigma & \sim N^+(0, 3) \\
+\end{aligned}
+$$
+
+## Analysis
+
+We used 4 chains, each with 2,000 iterations (first 1,000 as warm-ups). We tried different priors and ended up using the following ones for improved convergence.
+
+```{r}
+m1 <- brm(trustRTVec ~ DASS_Depr * agentType + (1 + agentType | ID), 
+          family = lognormal(),
+          data = data,
+          prior <- c(
+            prior(normal(7, 2), class = "Intercept"),
+            prior(normal(0, 1), class = "b"),              
+            prior(normal(0, 3), class = "sigma")           
+          ),
+          seed = 12345,
+          file = "model_lognormal"
+          )
+
+```
+
+# Results
+
+As shown in the rank histogram in @fig-rank-hist-fit below, the chains mixed well.
+
+```{r}
+#| label: fig-rank-hist-fit
+#| fig-cap: Rank histogram of the posterior distributions of model parameters.
+
+as_draws(m1) |>
+  mcmc_rank_hist(pars = c(
+    "b_Intercept",                          
+    "b_DASS_Depr",                          #Fixed effect for DASS_Depr
+    "b_agentTypeGRGO",                      #Fixed effect for agentTypeGRGO
+    "b_DASS_Depr:agentTypeGRGO",            #Interaction effect
+    "sigma"                                 #Residual SD
+  ))
+```
+
+@tbl-summ-fit shows the posterior distributions of the model parameters
+
+```{r}
+#| label: tbl-summ-fit
+#| tbl-cap: Posterior summary of the model parameters.
+summ_fit <- as_draws(m1) |>
+    subset_draws(variable = 
+                   c("b_Intercept", 
+                     "b_DASS_Depr", 
+                     "b_agentTypeGRGO", 
+                     "b_DASS_Depr:agentTypeGRGO", 
+                     "sigma")) |>
+    summarise_draws()
+
+# Display the summary as a table
+knitr::kable(summ_fit, digits = 2)
+```
+
+@tbl-summ-fit2 shows the density plots of the posterior distributions of the model parameters
+
+```{r}
+#| label: tbl-summ-fit2
+#| tbl-cap: Density plot of the posterior distributions.
+mcmc_areas(as_draws(m1), pars = 
+             c("b_Intercept", 
+               "b_DASS_Depr", 
+               "b_agentTypeGRGO", 
+               "b_DASS_Depr:agentTypeGRGO", 
+               "sigma"), prob = 0.95)
+```
+
+The analysis revealed that the intercept has a mean of 6.49, indicating the baseline RT when depression = 0 and agentType = bad rank, good outcome. The parameters related to the depression variable and the interaction between depression and agentType on RT are negligible, as their means and SDs are near zero. The agentType parameter has a slight negative effect with a mean of -0.05, showing that when agents provide a good rank, participants are likely to make faster responses in the trust game, compared to when they provide bad ranks. We can understand that there is some variability in the RTs that are not captured by the parameters in the model (mean_sigma = 0.49). Overall, these results do not suggest that depression significantly impacts RTs and there is only a minimal effect of the agentType. Parameters show a good model fit, as all R\^ values are close to zero and have high ESS. 
+
+# Model 2: skewnormal family
+
+Let $Y_i$ = trustRTVec, $X_1$ = DASS_Depr, $X_2$ = agentType, $Z_i$ = ID
+
+### Model:
+
+$$
+\begin{aligned}
+Y_i & \sim \text{SkewNormal}(\mu_i, \sigma) \\
+\mu_i & = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \beta_3 (X_1 \cdot X_2) + b_{0i} + b_{1i} X_2
+\end{aligned}
+$$
+
+### Prior:
+
+$$
+\begin{aligned}
+\beta_0 & \sim N(7, 2) \\
+\beta_k & \sim N(0, 1), \quad k \in \{1, 2, 3\} \\
+\sigma & \sim N^+(0, 3) \\
+\end{aligned}
+$$
+
+## Analysis
+
+We used 4 chains, each with 2,000 iterations (first 1,000 as warm-ups). We tried different priors and ended up using the following ones for improved convergence.
+
+```{r}
+m2 <- brm(trustRTVec ~ DASS_Depr * agentType + (1 + agentType | ID), 
+          family = skew_normal(),
+          data = data,
+          prior <- c(
+            prior(normal(7, 2), class = "Intercept"),      
+            prior(normal(0, 1), class = "b"),             
+            prior(normal(0, 3), class = "sigma")
+          ),
+          seed = 12345,
+          file = "model_skewnormal"
+          )
+
+```
+
+Alternatively tried this model but got a warning of ESS being too low and posterior meas and medians being unreliable. I'll report on the findings I got but we can change the model for our paper.
+
+# Results
+
+As shown in the rank histogram in @fig-rank-hist-fit_m2 below, the chains mixed well.
+
+```{r}
+#| label: fig-rank-hist-fit_m2
+#| fig-cap: Rank histogram of the posterior distributions of model parameters
+
+as_draws(m2) |>
+  mcmc_rank_hist(pars = c(
+    "b_Intercept",                          
+    "b_DASS_Depr",                          # Fixed effect for DASS_Depr
+    "b_agentTypeGRGO",                      # Fixed effect for agentTypeGRGO
+    "b_DASS_Depr:agentTypeGRGO",            # Interaction effect
+    "sigma"                                 # Residual SD
+  ))
+```
+
+@tbl-summ-fit_m2 shows the posterior distributions of the model parameters
+
+```{r}
+#| label: tbl-summ-fit_m2
+#| tbl-cap: Posterior summary of the model parameters.
+
+summ_fit <- as_draws(m2) |>
+    subset_draws(variable = 
+                   c("b_Intercept", 
+                     "b_DASS_Depr", 
+                     "b_agentTypeGRGO", 
+                     "b_DASS_Depr:agentTypeGRGO", 
+                     "sigma")) |>
+    summarise_draws()
+
+# Display the summary as a table
+knitr::kable(summ_fit, digits = 2)
+```
+
+@tbl-summ-fit2_m2 shows the density plots of the posterior distributions of the model parameters.
+
+```{r}
+#| label: tbl-summ-fit2_m2
+#| tbl-cap: Density plot of the posterior distributions.
+#| 
+mcmc_areas(as_draws(m2), pars = 
+             c("b_Intercept", 
+               "b_DASS_Depr", 
+               "b_agentTypeGRGO", 
+               "b_DASS_Depr:agentTypeGRGO", 
+               "sigma"), prob = 0.95)
+```
+
+Skew-normal model revealed that the intercept has a mean of 10.10, indicating the  baseline RT is higher when depression = 0 and agentType = bad rank, good outcome, but there is significant variability. The parameters related to depression and the interaction effect between depression and agentType on RT have negligible effects on RT, as their means are near zero and have wide SDs. The agentType parameter has a slight negative effect (mean = -0.05), showing that when agents provide a good rank, participants are likely to make faster responses in the trust game, compared to when they provide bad ranks. We can understand that there is some variability in the RTs that are not captured by the parameters in the model (mean_sigma = 222.61). However considering the warnings posterior means may be unreliable, thus should be interpreted with caution. Overall, these results do not suggest that depression significantly impacts RTs and there is only a minimal effect of the agentType. Parameters show a good model fit, as all R\^ values are close to zero and have high ESS.
