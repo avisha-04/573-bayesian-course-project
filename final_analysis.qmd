@@ -1,0 +1,303 @@
+---
+title: "Final_analysis"
+format: html
+editor: visual
+eval: true
+---
+
+```{r}
+#| message: false
+
+library(bayesplot)
+library(tidyverse)
+library(brms)
+library(modelsummary)
+library(dplyr)
+library(posterior)
+```
+
+# Research Question
+
+> Does the reaction time differ between participants with high versus low depression scores?
+
+# Variables
+
+-   \`ID' Participant id.
+-   \`agentType': Participants reaction time in trust games was measured when they played against two different kinds of agents, represented by agent type variable.
+-   'trustRTVec': Reaction time for each trial.
+-   'DASS_Depr': Self-reported depression scores.
+
+## Data Import
+
+```{r}
+data <- read.csv("merged_dat_trustgame_indvdfs.csv", row.names = NULL)
+
+data$agentType <- as.factor(data$agentType)
+
+data <- data[!is.na(data$trustRTVec) & !is.nan(data$trustRTVec) & !is.infinite(data$trustRTVec), ]
+```
+
+## Variable Summary
+
+Table @tbl-summ-var shows the summary statistics of RTs by agent types.
+
+```{r}
+#| label: tbl-summ-var
+#| tbl-cap: Descriptive statistics by groups
+datasummary(trustRTVec*
+                (N + Mean + SD + Min + Max + Histogram) ~ 
+                factor(agentType),
+            data = data)
+
+ggplot(data, aes(x = trustRTVec, fill = factor(agentType))) +
+  geom_histogram(binwidth = 10, alpha = 0.7, position = "identity") +
+  facet_wrap(~ agentType, scales = "free") +
+  labs(title = "Histograms of Reaction Times by Agent Type",
+       x = "Reaction Time",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+Tibble @tbl-summ-var2 shows statistics for trustRTVec across ranges of depressionScores (0-21)
+
+```{r}
+#| label: tbl-summ-var2
+
+data %>%
+  group_by(DASS_Depr) %>%
+  summarise(
+    N = n(),
+    Mean = mean(trustRTVec, na.rm = TRUE),
+    SD = sd(trustRTVec, na.rm = TRUE),
+    Min = min(trustRTVec, na.rm = TRUE),
+    Max = max(trustRTVec, na.rm = TRUE)
+  ) %>%
+  print()
+data %>%
+  summarise(N = n(),
+            Mean = mean(trustRTVec, na.rm = TRUE),
+            SD = sd(trustRTVec, na.rm = TRUE),
+            Min = min(trustRTVec, na.rm = TRUE),
+            Max = max(trustRTVec, na.rm = TRUE))
+
+```
+
+# Model 1 using lognormal family
+
+Let $Y_i$ = trustRTVec, N = total number of participants
+
+$$
+\text{Model:} \\
+\begin{aligned}
+    Y_i & \sim \text{LogNormal}(\mu_i, \sigma) \\
+    \mu_i & = \beta_0 + \beta_1 \text{DASS_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
+\end{aligned}
+$$
+
+$$
+\text{Random Effects:} \\
+\begin{aligned}
+    b_{0i} & \sim \mathcal{N}(0, \sigma_{\text{Intercept}}) \\
+    b_{1i} & \sim \mathcal{N}(0, \sigma_{\text{agentType}}) \\
+    \text{where:} \quad i = 1, 2, \dots, N
+\end{aligned}
+$$
+
+$$
+\text{Prior Distributions:} \\
+\begin{aligned}
+    \beta_0 & \sim \mathcal{N}(0.5, 0.5) \\
+    \beta_1 & \sim \mathcal{N}(0, 1) \\
+    \beta_2 & \sim \mathcal{N}(0, 1) \\
+    \beta_3 & \sim \mathcal{N}(0, 1) \\
+    \sigma_{\text{Intercept}} & \sim \mathcal{N}(0, 1) \\
+    \sigma_{\text{agentType}} & \sim \mathcal{N}(0, 1) \\
+    \sigma & \sim \mathcal{N}(0.1, 0.1)
+\end{aligned}
+$$
+
+## Analysis
+
+Draws: 4 chains, each with iter = 4000; warmup = 2000
+
+```{r}
+model_lognormal <- brm(trustRTVec ~ DASS_Depr * agentType + (1 + agentType | ID), 
+                 family = lognormal(), 
+                 data = data,
+                 prior = c(
+                   prior(normal(0.5, 0.5), class = "Intercept"),
+                   prior(normal(0, 1), class = "b"),
+                   prior(normal(0.1, 0.1), class = "sigma"), 
+                   prior(normal(0, 1), class = "sd")),
+                 seed = 12345,
+                 iter = 4000,              
+                 warmup = 2000,            
+                 chains = 4,                
+                 file = "m1"
+                 )
+```
+
+```{r}
+summary(model_lognormal)
+```
+
+# Results
+
+Convergence checks
+
+According to the rank histogram in @fig-rank-hist-fit below, the chains mixed well.
+
+```{r}
+#| label: fig-rank-hist-fit
+#| fig-cap: Rank histogram of the posterior distributions of model parameters.
+
+as_draws(model_lognormal) |>
+  mcmc_rank_hist(pars = c(
+    "b_Intercept",                          # Intercept
+    "b_DASS_Depr",                          # Fixed effect for DASS_Depr
+    "b_agentTypeGRGO",                      # Fixed effect for agentTypeGRGO
+    "b_DASS_Depr:agentTypeGRGO",            # Interaction effect
+    "sigma"                                 # Residual SD
+  ))
+```
+
+@tbl-summ-fit shows the posterior distributions of the model parameters
+
+```{r}
+#| label: tbl-summ-fit
+#| tbl-cap: Posterior summary of the model parameters.
+summ_fit <- as_draws(model_lognormal) |>
+    subset_draws(variable = c("b_Intercept", "b_DASS_Depr", "b_agentTypeGRGO", "b_DASS_Depr:agentTypeGRGO", "sigma")) |>
+    summarise_draws()
+
+# Display the summary as a table
+knitr::kable(summ_fit, digits = 2)
+```
+
+@tbl-summ-fit2 shows the density plots of the posterior distributions of the model parameters.
+
+```{r}
+#| label: tbl-summ-fit2
+#| tbl-cap: Density plot of the posterior distributions.
+mcmc_areas(as_draws(model_lognormal), pars = c("b_Intercept", "b_DASS_Depr", "b_agentTypeGRGO", "b_DASS_Depr:agentTypeGRGO", "sigma"), prob = 0.95) # Show the 95% credible interval
+```
+
+### Posterior Predictive Checks
+
+```{r}
+pp_check(model_lognormal)
+pp_check(model_lognormal, stat = "mean")
+pp_check(model_lognormal, stat = "sd")
+```
+
+# Model 2 using skewnormal family
+
+Let $Y_i$ = trustRTVec
+
+$$
+\text{Model:} \\
+\begin{aligned}
+    Y_i & \sim \text{SkewNormal}(\mu_i, \sigma) \\
+    \mu_i & = \beta_0 + \beta_1 \text{DASS_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
+\end{aligned}
+$$
+
+$$
+\text{Random Effects:} \\
+\begin{aligned}
+    b_{0i} & \sim \mathcal{N}(0, \sigma_{\text{Intercept}}) \\
+    b_{1i} & \sim \mathcal{N}(0, \sigma_{\text{agentType}}) \\
+    \text{where:} \quad i = 1, 2, \dots, N
+\end{aligned}
+$$
+
+$$
+\text{Prior Distributions:} \\
+\begin{aligned}
+    \beta_0 & \sim \mathcal{N}(1, 0.5) \\
+    \beta_1 & \sim \mathcal{N}(0, 1) \\
+    \beta_2 & \sim \mathcal{N}(0, 1) \\
+    \beta_3 & \sim \mathcal{N}(0, 1) \\
+    \sigma_{\text{Intercept}} & \sim \mathcal{N}(0, 1) \\
+    \sigma_{\text{agentType}} & \sim \mathcal{N}(0, 1) \\
+    \sigma & \sim \mathcal{N}(0.5, 0.1)
+\end{aligned}
+$$
+
+## Analysis
+
+Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1; total post-warmup draws = 4000
+
+```{r}
+model_skewnormal4 <- brm(trustRTVec ~ DASS_Depr * agentType + (1 + agentType | ID), 
+                 family = skew_normal(), 
+                 data = data,
+                 prior = c(
+                   prior(normal(1, 1), class = "Intercept"),  
+                   prior(normal(0, 1), class = "b"),            
+                   prior(normal(0, 1), class = "sigma"),    
+                   prior(normal(0, 1), class = "sd")
+                 ),
+                 init = 0,
+                 seed = 12345,
+                 iter = 4000,              
+                 warmup = 2000,            
+                 chains = 4,                
+                 file = "m2_4" 
+                 )
+```
+
+# Results
+
+Convergence checks
+
+According to the rank histogram in @fig-rank-hist-fit_m2 below, the chains mixed well.
+
+```{r}
+#| label: fig-rank-hist-fit_m2
+#| fig-cap: Rank histogram of the posterior distributions of model parameters.
+
+as_draws(model_skewnormal4) |>
+  mcmc_rank_hist(pars = c(
+    "b_Intercept",                          # Intercept
+    "b_DASS_Depr",                          # Fixed effect for DASS_Depr
+    "b_agentTypeGRGO",                      # Fixed effect for agentTypeGRGO
+    "b_DASS_Depr:agentTypeGRGO",            # Interaction effect
+    "sigma"                                 # Residual SD
+  ))
+```
+
+@tbl-summ-fit_m2 shows the posterior distributions of the model parameters
+
+```{r}
+#| label: tbl-summ-fit_m2
+#| tbl-cap: Posterior summary of the model parameters.
+
+summ_fit <- as_draws(model_skewnormal4) |>
+    subset_draws(variable = c("b_Intercept", "b_DASS_Depr", "b_agentTypeGRGO", "b_DASS_Depr:agentTypeGRGO", "sigma")) |>
+    summarise_draws()
+
+# Display the summary as a table
+knitr::kable(summ_fit, digits = 2)
+```
+
+```{r}
+summary(model_skewnormal4)
+```
+
+@tbl-summ-fit2_m2 shows the density plots of the posterior distributions of the model parameters.
+
+```{r}
+#| label: tbl-summ-fit2_m2
+#| tbl-cap: Density plot of the posterior distributions.
+#| 
+mcmc_areas(as_draws(model_skewnormal4), pars = c("b_Intercept", "b_DASS_Depr", "b_agentTypeGRGO", "b_DASS_Depr:agentTypeGRGO", "sigma"), prob = 0.95) # Show the 95% credible interval
+```
+
+### Posterior Predictive Checks
+
+```{r}
+pp_check(model_skewnormal4)
+pp_check(model_skewnormal4, stat = "mean")
+pp_check(model_skewnormal4, stat = "sd")
+```
