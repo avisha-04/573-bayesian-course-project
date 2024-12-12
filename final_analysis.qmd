@@ -87,10 +87,10 @@ data %>%
 Let $Y_i$ = trustRTVec, N = total number of participants
 
 $$
-\text{Model:} \\
+\text{Model:} 
 \begin{aligned}
     Y_i & \sim \text{LogNormal}(\mu_i, \sigma) \\
-    \mu_i & = \beta_0 + \beta_1 \text{DASS_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
+    \mu_i & = \beta_0 + \beta_1 \text{DASS\_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS\_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
 \end{aligned}
 $$
 
@@ -195,10 +195,10 @@ pp_check(model_lognormal, stat = "sd")
 Let $Y_i$ = trustRTVec
 
 $$
-\text{Model:} \\
+\text{Model:} 
 \begin{aligned}
     Y_i & \sim \text{SkewNormal}(\mu_i, \sigma) \\
-    \mu_i & = \beta_0 + \beta_1 \text{DASS_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
+    \mu_i & = \beta_0 + \beta_1 \text{DASS\_Depr}_i + \beta_2 \text{agentType}_i + \beta_3 (\text{DASS\_Depr}_i \cdot \text{agentType}_i) + b_{0i} + b_{1i} \text{agentType}_i
 \end{aligned}
 $$
 
